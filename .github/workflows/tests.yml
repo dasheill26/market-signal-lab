@@ -56,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Docker image (multi-stage: Node build + Python runtime)
+      - name: "Build Docker image (multi-stage: Node build + Python runtime)"
         run: docker build -t market-lab-test .
 
       - name: Run container and verify it serves both API and frontend
