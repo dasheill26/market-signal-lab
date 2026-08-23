@@ -1,0 +1,108 @@
+# Market Signal Lab
+
+A full-stack time-series ML forecasting app for stocks and forex — React frontend, Flask + WebSocket backend, a gradient-boosted model on manually implemented technical indicators, and **honest walk-forward backtested accuracy shown next to every prediction**, not hidden below it.
+
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+[![tests](https://github.com/dasheill26/market-signal-lab/actions/workflows/tests.yml/badge.svg)](https://github.com/dasheill26/market-signal-lab/actions/workflows/tests.yml)
+
+🔗 **[Live demo](https://market-signal-lab.onrender.com)**
+
+## Not financial advice — read this first
+
+This project exists to demonstrate how a **properly evaluated** financial ML pipeline actually behaves, including how small a genuine edge over a naive baseline really is. Markets are close enough to efficient that no portfolio project has real trading edge, and any project claiming otherwise should make you suspicious of it, not impressed by it.
+
+The measured result on real NVDA data (1999–2026, walk-forward validated):
+
+| | Accuracy |
+|---|---|
+| Model (gradient-boosted trees on technical indicators) | **50.99%** |
+| Naive baseline ("tomorrow moves the same direction as today") | 49.49% |
+| Random / coin-flip | 50.00% |
+
+A ~1.5 percentage point edge over the naive baseline. That's the honest number — not hidden, not spun, shown directly in the UI next to every forecast. The value of this project is the methodology (walk-forward validation, honest baseline comparison, a real full-stack delivery), not a claim that it beats the market.
+
+## What this actually is
+
+- **Directional forecasting**, not price prediction — the model predicts whether the next period closes up or down, with a confidence score. Predicting an exact future price is a much easier claim to overclaim and far harder to evaluate honestly.
+- **Walk-forward backtested**, not randomly split — a random shuffled train/test split on time-series data leaks future information into training and produces inflated, meaningless accuracy numbers. This project trains only on data strictly before each test window, rolls the cutoff forward, and repeats — verified directly by a test that checks fold boundaries never overlap.
+- **A gradient-boosted tree model, not a deep learning model** — deliberately. On this much data (a few thousand daily bars) and this feature set (~15 engineered tabular indicators), a deep model is more prone to overfitting and no more likely to add real signal, while costing far more to train and deploy. (A separate project in this portfolio, [Face Recognition Studio](https://github.com/dasheill26/face-recognition-studio), already demonstrates what happens when a heavy deep learning stack gets reached for without checking the resource cost first — one attribute model there measured at 3.5GB peak RAM. Lesson applied here before it became a problem, not after.)
+
+## Architecture
+
+```
+market-lab/
+├── backend/
+│   ├── app/
+│   │   ├── engine/
+│   │   │   ├── data_source.py   # live Yahoo Finance + cached-real-data fallback
+│   │   │   ├── features.py      # RSI, MACD, Bollinger Bands - implemented manually
+│   │   │   ├── model.py         # HistGradientBoostingClassifier
+│   │   │   ├── backtest.py      # walk-forward validation - the honesty-critical file
+│   │   │   └── predictor.py     # ties the above together into one call
+│   │   ├── routes.py            # REST API
+│   │   └── sockets.py           # WebSocket live price updates
+│   ├── data/nvda_sample.csv     # real historical data (not synthetic), fallback + test fixture
+│   └── tests/
+├── frontend/                     # React + Vite, lightweight-charts, socket.io-client
+└── Dockerfile                    # multi-stage: Node build -> Python runtime, single service
+```
+
+Frontend and backend deploy as a **single service** — the React app is built at Docker build time and served directly by Flask, not hosted separately. Simpler, one port, no CORS complexity in production.
+
+## Real bugs found during development (not hypothetical)
+
+1. **`eventlet` (Flask-SocketIO's typical async driver) is deprecated** — confirmed by testing, not assumed; switched to `threading` async mode, which needs no extra dependency and works cleanly with gunicorn's `gthread` worker class (verified directly, including a real WebSocket handshake through the actual production server).
+2. **A real Flask routing bug**: setting `static_url_path=""` to serve the built React app caused Flask's own *implicit* static-file route to silently shadow the custom SPA catch-all route. Every unknown client-side path returned a raw Flask 404 instead of falling back to `index.html` — breaking any direct link or page refresh on a non-root URL. Found by testing the exact failure scenario directly, not by inspection. Fixed by disabling Flask's implicit static handling (`static_folder=None`) and serving everything through one explicit route. Now a permanent regression test.
+3. **A moderate esbuild vulnerability** in the initial Vite version pulled in by `npm install` — not ignored; upgraded to a patched Vite version and confirmed `npm audit` reports zero vulnerabilities before this was considered done.
+4. **Yahoo Finance's endpoints are unreachable from network-restricted sandboxed environments** — confirmed directly, not assumed. This shaped the dual-mode data source design: live fetch with a fallback to bundled real historical data, with the active mode disclosed in every API response and shown in the UI, not silently swapped.
+
+## What "live" actually means here
+
+The WebSocket layer polls the data source every 30 seconds per actively-subscribed symbol and pushes updates to connected clients. That's genuinely useful — no page reload needed, real server-push rather than client-side polling — and it is **not** the same thing as tick-level market data streaming, which needs a paid real-time feed this project doesn't have. Documented plainly rather than implied to be something it isn't.
+
+## Running it
+
+### Backend
+
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python run.py    # http://127.0.0.1:5003
+```
+
+### Frontend (separate dev server, proxies API calls to the backend)
+
+```bash
+cd frontend
+npm install
+npm run dev    # http://127.0.0.1:5173
+```
+
+### Full stack via Docker (what production actually runs)
+
+```bash
+docker build -t market-lab .
+docker run -p 5003:5003 market-lab
+```
+
+## Tests
+
+```bash
+cd backend && pytest tests/ -v
+```
+
+12 tests: technical indicator correctness (RSI mathematically bounded 0–100), the walk-forward fold-boundary guarantee, API contract tests (every forecast response must include the disclaimer and data mode — a client can never receive a prediction without both), and the SPA routing regression test above.
+
+## What I'd do with more time
+
+- **A proper time-series cross-validation library** (e.g. `sktime`) instead of the hand-rolled walk-forward splitter — the current implementation is correct and tested, but a maintained library would handle more edge cases.
+- **More instruments and a longer history** for less liquid forex pairs, where the bundled fallback dataset (NVDA only) doesn't represent the requested symbol at all.
+- **Feature importance / explainability output** (e.g. SHAP values) alongside each prediction — "why did the model say up?" is a natural next question the current UI doesn't answer.
+- **Rate limiting** on the API, same known gap as the other projects in this portfolio.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

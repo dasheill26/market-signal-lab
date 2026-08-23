@@ -1,0 +1,91 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run backend test suite
+        working-directory: backend
+        run: pytest tests/ -v
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Check for vulnerabilities
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image (multi-stage: Node build + Python runtime)
+        run: docker build -t market-lab-test .
+
+      - name: Run container and verify it serves both API and frontend
+        run: |
+          docker run -d --name mltest -p 5003:5003 market-lab-test
+
+          echo "Waiting for the app to boot..."
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:5003/healthz -o /tmp/health.json; then
+              echo "App responded after ${i}s (approx)"
+              break
+            fi
+            sleep 3
+          done
+
+          echo "--- container logs ---"
+          docker logs mltest
+          echo "--- health check response ---"
+          cat /tmp/health.json
+
+          echo "--- API check ---"
+          curl -sf http://localhost:5003/api/symbols | tee /tmp/symbols.json
+          grep -q '"stocks"' /tmp/symbols.json
+
+          echo "--- forecast check (exercises the real ML pipeline end to end) ---"
+          curl -sf http://localhost:5003/api/forecast/NVDA | tee /tmp/forecast.json
+          grep -q '"disclaimer"' /tmp/forecast.json
+
+          echo "--- frontend check (confirms the built React app is actually served) ---"
+          curl -sf http://localhost:5003/ | grep -q "Market Signal Lab"
+
+          docker stop mltest
