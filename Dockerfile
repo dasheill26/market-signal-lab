@@ -25,5 +25,8 @@ COPY backend/ .
 COPY --from=frontend-build /frontend/dist ./frontend_dist
 
 EXPOSE 5003
-ENTRYPOINT ["gunicorn", "--worker-class", "gthread", "--threads", "4", \
-            "--bind", "0.0.0.0:5003", "--timeout", "60", "run:app"]
+# Shell form (not exec/JSON array form) deliberately - exec form can't expand
+# environment variables, and this needs to respect whatever $PORT a hosting
+# platform assigns (Render, and most PaaS platforms, assign their own port
+# and expect the container to bind to it) rather than always using 5003.
+ENTRYPOINT gunicorn --worker-class gthread --threads 4 --bind 0.0.0.0:${PORT:-5003} --timeout 60 run:app
