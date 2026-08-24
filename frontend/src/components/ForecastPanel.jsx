@@ -1,4 +1,6 @@
-export default function ForecastPanel({ forecast, livePrice, loading }) {
+const HORIZON_LABELS = { 1: 'next 1 day', 3: 'next 3 days', 5: 'next week', 10: 'next 2 weeks' }
+
+export default function ForecastPanel({ forecast, livePrice, loading, horizon }) {
   if (loading || !forecast) {
     return (
       <div className="panel">
@@ -10,10 +12,11 @@ export default function ForecastPanel({ forecast, livePrice, loading }) {
 
   const currentPrice = livePrice?.close ?? forecast.last_close
   const isUp = forecast.direction === 'up'
+  const horizonLabel = HORIZON_LABELS[horizon] || `next ${horizon} periods`
 
   return (
     <div className="panel">
-      <h2>Next-Period Forecast</h2>
+      <h2>Forecast — {horizonLabel}</h2>
 
       {forecast.data_mode !== 'live' && (
         <div className="mode-note">

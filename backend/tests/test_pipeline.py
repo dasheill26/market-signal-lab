@@ -204,6 +204,32 @@ def test_api_analysis_endpoint_returns_all_four_components():
     assert "calibration" in data and "brier_score" in data["calibration"]
 
 
+def test_forex_fallback_returns_forex_priced_data_not_stock_data():
+    """Regression test for a real, meaningful bug: the fallback used to
+    always serve NVDA stock data regardless of what was requested, so a
+    failed live fetch for EURUSD would silently return stock prices up
+    to $207 mislabeled as forex demo data - wildly wrong for a currency
+    pair that should trade around 1.0-1.6. Confirmed by checking the
+    actual price range, not just that the function returns without
+    crashing - a wrong-but-present result would have passed a weaker test."""
+    from app.engine.data_source import fetch_ohlcv
+    df, mode = fetch_ohlcv("EURUSD=X")
+    assert mode == "cached_demo_data"
+    # EUR/USD has never traded below 0.5 or above 2.0 in its history -
+    # a stock-range price here means the fallback served the wrong asset.
+    assert 0.5 < df["Close"].min() < 2.0
+    assert 0.5 < df["Close"].max() < 2.0
+
+
+def test_stock_fallback_still_returns_stock_priced_data():
+    """Companion to the test above - confirms fixing forex didn't break
+    the existing stock fallback path."""
+    from app.engine.data_source import fetch_ohlcv
+    df, mode = fetch_ohlcv("NVDA")
+    assert mode == "cached_demo_data"
+    assert df["Close"].max() > 10  # NVDA has never traded in forex-like ranges
+
+
 if __name__ == "__main__":
     test_features_produce_expected_columns()
     test_rsi_stays_within_valid_range()

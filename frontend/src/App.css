@@ -20,6 +20,18 @@ h1 { font-family: var(--display); font-size: 1.4rem; font-weight: 700; margin: 0
 .pill.active { background: var(--accent-dim); color: var(--accent); border-color: rgba(69,196,192,0.4); }
 .pill:hover:not(.active) { border-color: var(--muted); }
 
+.horizon-selector { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 1.2rem; }
+.horizon-pills { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.horizon-pill {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  font-family: var(--body); font-size: 0.82rem; font-weight: 500; padding: 0.5rem 0.9rem;
+  border-radius: 9px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 0.1rem;
+}
+.horizon-pill.active { background: var(--accent-dim); border-color: rgba(69,196,192,0.4); }
+.horizon-pill.active .horizon-tag { color: var(--accent); }
+.horizon-pill:hover:not(.active) { border-color: var(--muted); }
+.horizon-tag { font-family: var(--mono); font-size: 0.62rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+
 .disclaimer-banner {
   background: var(--warn-dim); border: 1px solid rgba(234,184,79,0.25); color: var(--warn);
   font-size: 0.85rem; padding: 0.8rem 1.1rem; border-radius: 10px; margin-bottom: 1.4rem;
