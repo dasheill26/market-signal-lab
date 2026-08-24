@@ -249,6 +249,54 @@ def test_stock_fallback_still_returns_stock_priced_data(monkeypatch):
     assert df["Close"].max() > 10  # NVDA has never traded in forex-like ranges
 
 
+def test_gold_maps_to_correct_yfinance_ticker():
+    """Regression guard for a real finding: yfinance doesn't recognize
+    'XAUUSD=X' (confirmed via Yahoo Finance's own symbol search returning
+    no results for it) - the correct ticker is 'GC=F' (COMEX Gold
+    Futures). This checks the mapping is actually wired in, not just
+    documented in a comment."""
+    from app.engine.data_source import YFINANCE_TICKER_MAP
+    assert YFINANCE_TICKER_MAP.get("XAUUSD") == "GC=F"
+
+
+def test_gold_fallback_returns_gold_priced_data_not_stock_or_forex_data(monkeypatch):
+    """Same class of bug as the forex fallback fix - gold trades in the
+    low thousands per ounce, wildly different from both stock range
+    (tens to hundreds) and forex range (roughly 0.5-2.0). Confirmed by
+    checking the actual price range with the live path forced to fail
+    deterministically."""
+    import app.engine.data_source as data_source
+
+    def fail_yfinance(*args, **kwargs):
+        raise RuntimeError("forced failure for testing the fallback path")
+
+    monkeypatch.setattr("yfinance.download", fail_yfinance)
+    df, mode = data_source.fetch_ohlcv("XAUUSD")
+    assert mode == "cached_demo_data"
+    assert 500 < df["Close"].min() < 3000
+    assert 500 < df["Close"].max() < 3000
+
+
+def test_api_forecast_works_for_gold():
+    """Full pipeline integration test through the real API, not just the
+    data layer - confirms gold genuinely works end to end, not just that
+    its fallback data loads."""
+    client = app.test_client()
+    r = client.get("/api/forecast/XAUUSD")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["forecast"]["symbol"] == "XAUUSD"
+    assert data["forecast"]["last_close"] > 500  # sanity check it's not stock/forex-range data
+
+
+def test_api_risk_education_works_for_gold():
+    client = app.test_client()
+    r = client.get("/api/risk-education/XAUUSD")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["current_atr"] > 0
+
+
 def test_atr_is_always_non_negative():
     """ATR is a range measure - mathematically it can never be negative.
     A real sanity check on the calculation, not just 'does it run'."""

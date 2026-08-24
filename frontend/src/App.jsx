@@ -12,7 +12,7 @@ import './App.css'
 const SOCKET_URL = import.meta.env.VITE_API_URL || ''
 
 export default function App() {
-  const [symbols, setSymbols] = useState({ stocks: [], forex: [] })
+  const [symbols, setSymbols] = useState({ stocks: [], forex: [], metals: [] })
   const [symbol, setSymbol] = useState('NVDA')
   const [horizon, setHorizon] = useState(1)
   const [forecast, setForecast] = useState(null)
