@@ -127,3 +127,23 @@ footer a:hover { text-decoration: underline; }
 .good-text { color: var(--up); }
 .bad-text { color: var(--down); }
 .calibration-note { color: var(--muted); font-size: 0.73rem; line-height: 1.5; margin-top: 0.7rem; }
+
+.risk-intro { color: var(--muted); font-size: 0.85rem; line-height: 1.6; margin: 0 0 1.2rem; }
+.risk-intro strong { color: var(--warn); }
+.atr-summary { background: var(--panel-2); border-radius: 10px; padding: 0.8rem 1rem; margin-bottom: 1.2rem; }
+
+.risk-table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; font-size: 0.85rem; }
+.risk-table th { text-align: left; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); }
+.risk-table td { padding: 0.6rem; border-bottom: 1px dashed var(--border); cursor: pointer; }
+.risk-table tr.selected { background: var(--accent-dim); }
+.risk-table tr:hover:not(.selected) { background: var(--panel-2); }
+
+.calculator { background: var(--panel-2); border-radius: 10px; padding: 1.1rem 1.2rem; }
+.calculator h3 { font-family: var(--display); font-size: 0.85rem; font-weight: 600; margin: 0 0 0.3rem; }
+.calc-inputs { display: flex; gap: 1.2rem; flex-wrap: wrap; margin: 0.9rem 0; }
+.calc-inputs label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.78rem; color: var(--muted); }
+.calc-inputs input {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  padding: 0.5rem 0.7rem; border-radius: 8px; font-family: var(--mono); font-size: 0.9rem; width: 140px;
+}
+.calc-results { margin-top: 0.9rem; padding-top: 0.9rem; border-top: 1px dashed var(--border); }

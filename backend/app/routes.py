@@ -12,6 +12,8 @@ from flask import Blueprint, jsonify, request
 
 from app.engine.data_source import SUPPORTED_SYMBOLS
 from app.engine.predictor import run_forecast, run_advanced_analysis
+from app.engine.risk_education import build_risk_education, position_size as calc_position_size
+from app.engine.data_source import fetch_ohlcv
 
 bp = Blueprint("main", __name__)
 
@@ -68,6 +70,49 @@ def get_analysis(symbol):
         result = run_advanced_analysis(symbol)
     except Exception as e:
         return jsonify({"error": f"Could not run analysis for '{symbol}': {e}"}), 422
+    return jsonify(result)
+
+
+@bp.route("/api/risk-education/<symbol>")
+def get_risk_education(symbol):
+    """ATR-based risk-sizing reference data - deliberately decoupled from
+    the forecast direction. Fast (no model training), just a volatility
+    calculation plus illustrative reference multiples."""
+    try:
+        df, mode = fetch_ohlcv(symbol)
+        current_price = float(df["Close"].iloc[-1])
+        result = build_risk_education(df, current_price)
+        result["symbol"] = symbol
+        result["data_mode"] = mode
+    except Exception as e:
+        return jsonify({"error": f"Could not compute risk data for '{symbol}': {e}"}), 422
+    return jsonify(result)
+
+
+@bp.route("/api/position-size", methods=["POST"])
+def api_position_size():
+    """Pure arithmetic, no model or market data involved - the same
+    formula any risk-management course teaches. A calculator, not a
+    recommendation: the person supplies every input themselves."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+
+    try:
+        account_size = float(data.get("account_size", 0))
+        risk_pct = float(data.get("risk_pct", 0))
+        stop_distance = float(data.get("stop_distance", 0))
+        price_per_unit = float(data.get("price_per_unit", 1))
+    except (TypeError, ValueError):
+        return jsonify({"error": "account_size, risk_pct, stop_distance, and price_per_unit must be numbers"}), 400
+
+    if account_size <= 0 or risk_pct <= 0 or risk_pct > 100:
+        return jsonify({"error": "account_size must be positive and risk_pct must be between 0 and 100"}), 400
+
+    try:
+        result = calc_position_size(account_size, risk_pct, stop_distance, price_per_unit)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     return jsonify(result)
 
 

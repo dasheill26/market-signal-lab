@@ -6,6 +6,7 @@ import PriceChart from './components/PriceChart.jsx'
 import ForecastPanel from './components/ForecastPanel.jsx'
 import BacktestPanel from './components/BacktestPanel.jsx'
 import AdvancedAnalysisPanel from './components/AdvancedAnalysisPanel.jsx'
+import RiskEducationPanel from './components/RiskEducationPanel.jsx'
 import './App.css'
 
 const SOCKET_URL = import.meta.env.VITE_API_URL || ''
@@ -100,6 +101,8 @@ export default function App() {
       </div>
 
       <AdvancedAnalysisPanel symbol={symbol} />
+
+      <RiskEducationPanel symbol={symbol} currentPrice={livePrice?.close ?? forecast?.last_close} />
 
       <footer>
         Built with a gradient-boosted tree model (scikit-learn) on manually implemented

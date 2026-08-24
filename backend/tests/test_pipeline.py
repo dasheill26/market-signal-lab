@@ -249,6 +249,83 @@ def test_stock_fallback_still_returns_stock_priced_data(monkeypatch):
     assert df["Close"].max() > 10  # NVDA has never traded in forex-like ranges
 
 
+def test_atr_is_always_non_negative():
+    """ATR is a range measure - mathematically it can never be negative.
+    A real sanity check on the calculation, not just 'does it run'."""
+    from app.engine.risk_education import compute_atr
+    df = _load_sample()
+    atr = compute_atr(df)
+    assert (atr.dropna() >= 0).all()
+
+
+def test_risk_education_examples_have_increasing_stop_distance():
+    """The three illustrative examples (tight/default/wider stop) should
+    be genuinely ordered - a real check on the output shape, not just
+    that three items exist."""
+    from app.engine.risk_education import build_risk_education
+    df = _load_sample()
+    current_price = float(df["Close"].iloc[-1])
+    result = build_risk_education(df, current_price)
+    distances = [e["stop_distance"] for e in result["examples"]]
+    assert distances == sorted(distances)
+    assert len(result["examples"]) == 3
+
+
+def test_risk_education_never_mentions_a_trade_direction():
+    """The whole point of this feature: it must never say buy/sell/long/
+    short, and must never reference the forecast's direction - it's risk
+    methodology, decoupled from any prediction. Checked directly against
+    every string value in the response, not just the note field."""
+    from app.engine.risk_education import build_risk_education
+    df = _load_sample()
+    current_price = float(df["Close"].iloc[-1])
+    result = build_risk_education(df, current_price)
+    forbidden_words = ["buy", "sell", "long", "short", " up ", " down "]
+    full_text = str(result).lower()
+    for word in forbidden_words:
+        assert word not in full_text, f"Risk education output should never say '{word}'"
+
+
+def test_position_size_formula_is_correct():
+    """Direct check of the actual arithmetic, not just that it returns
+    something. 1% risk on $10,000 = $100; $100 / $5 stop = 20 units."""
+    from app.engine.risk_education import position_size
+    result = position_size(account_size=10000, risk_pct=1.0, stop_distance=5.0, price_per_unit=50.0)
+    assert result["risk_amount"] == 100.0
+    assert result["units"] == 20.0
+    assert result["position_value"] == 1000.0
+
+
+def test_position_size_rejects_zero_stop_distance():
+    from app.engine.risk_education import position_size
+    import pytest
+    with pytest.raises(ValueError):
+        position_size(account_size=10000, risk_pct=1.0, stop_distance=0, price_per_unit=50.0)
+
+
+def test_api_risk_education_endpoint():
+    client = app.test_client()
+    r = client.get("/api/risk-education/NVDA")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert "current_atr" in data
+    assert len(data["examples"]) == 3
+
+
+def test_api_position_size_endpoint_handles_bad_input_cleanly():
+    """Regression test for a real bug found during development: this
+    endpoint originally called a helper function (_get_json_body) that
+    was never defined in this project - copied from a pattern used in a
+    different project without checking it existed here, causing every
+    request to crash with an unhandled 500. Found immediately by testing
+    before it ever reached production, but the fix needs a permanent
+    test so it can't silently regress."""
+    client = app.test_client()
+    r = client.post("/api/position-size", json={"account_size": -100, "risk_pct": 1, "stop_distance": 5, "price_per_unit": 100})
+    assert r.status_code == 400
+    assert "error" in r.get_json()
+
+
 if __name__ == "__main__":
     test_features_produce_expected_columns()
     test_rsi_stays_within_valid_range()
