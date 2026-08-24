@@ -62,6 +62,22 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     df["close_vs_sma10"] = (close - df["sma_10"]) / df["sma_10"]
     df["close_vs_sma30"] = (close - df["sma_30"]) / df["sma_30"]
 
+    # Real bug found and fixed: a live-data edge case a clean historical
+    # fallback dataset doesn't happen to contain - a zero-volume day
+    # followed by a nonzero-volume day - makes volume_change's
+    # pct_change() produce a genuine mathematical infinity (percentage
+    # change from a zero base is undefined), which crashed model
+    # training on a real deployment with "Input X contains infinity".
+    # bb_pct has the same risk if a degenerate zero-volatility stretch
+    # ever made bb_upper equal bb_lower. Fixed at the source, here, so
+    # every caller of add_features is protected uniformly - both the
+    # walk-forward/training path (via prepare_dataset) and the separate
+    # direct call predictor.py makes to featurize the single most recent
+    # row for a live prediction, which a fix placed only in
+    # prepare_dataset would have missed entirely.
+    feature_cols = [c for c in df.columns if c not in ("Open", "High", "Low", "Close", "Volume")]
+    df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan)
+
     return df
 
 

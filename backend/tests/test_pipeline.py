@@ -297,6 +297,61 @@ def test_api_risk_education_works_for_gold():
     assert data["current_atr"] > 0
 
 
+def test_websocket_unsubscribe_removes_symbol_from_active_polling():
+    """Regression test for a real bug: unsubscribe only called leave_room(),
+    never removing the symbol from _active_symbols - so the backend kept
+    polling every symbol ever visited in the app's lifetime, forever, even
+    with zero remaining subscribers. Confirmed directly against the
+    module's internal state, not just that the emit doesn't crash."""
+    import app.sockets as sockets
+    from run import app as flask_app, socketio
+
+    client = socketio.test_client(flask_app)
+    client.emit("subscribe", {"symbol": "NVDA"})
+    assert "NVDA" in sockets._active_symbols
+
+    client.emit("unsubscribe", {"symbol": "NVDA"})
+    assert "NVDA" not in sockets._active_symbols
+    client.disconnect()
+
+
+def test_websocket_disconnect_cleans_up_subscriptions_even_without_explicit_unsubscribe():
+    """Companion to the test above - a client closing the browser tab
+    never calls unsubscribe explicitly. Confirms the disconnect handler
+    cleans up whatever that session was still subscribed to, so symbols
+    don't accumulate phantom subscribers that never go away."""
+    import app.sockets as sockets
+    from run import app as flask_app, socketio
+
+    client = socketio.test_client(flask_app)
+    client.emit("subscribe", {"symbol": "GOOGL"})
+    assert "GOOGL" in sockets._active_symbols
+
+    client.disconnect()
+    assert "GOOGL" not in sockets._active_symbols
+
+
+def test_websocket_shared_symbol_stays_active_while_any_subscriber_remains():
+    """Two sessions subscribed to the same symbol - one disconnecting
+    should not stop polling for the other. Confirms the subscriber count
+    is genuinely a count, not just a boolean flag."""
+    import app.sockets as sockets
+    from run import app as flask_app, socketio
+
+    client_a = socketio.test_client(flask_app)
+    client_b = socketio.test_client(flask_app)
+    client_a.emit("subscribe", {"symbol": "MSFT"})
+    client_b.emit("subscribe", {"symbol": "MSFT"})
+    assert sockets._symbol_subscriber_counts.get("MSFT") == 2
+
+    client_a.disconnect()
+    assert "MSFT" in sockets._active_symbols  # client_b is still subscribed
+    assert sockets._symbol_subscriber_counts.get("MSFT") == 1
+
+    client_b.disconnect()
+    assert "MSFT" not in sockets._active_symbols
+
+
 def test_atr_is_always_non_negative():
     """ATR is a range measure - mathematically it can never be negative.
     A real sanity check on the calculation, not just 'does it run'."""
@@ -304,6 +359,27 @@ def test_atr_is_always_non_negative():
     df = _load_sample()
     atr = compute_atr(df)
     assert (atr.dropna() >= 0).all()
+
+
+def test_features_never_produce_infinity_even_with_zero_volume_day():
+    """Regression test for a real bug found on a live deployment: a
+    zero-volume day followed by a nonzero-volume day makes
+    volume_change's pct_change() produce a genuine mathematical infinity
+    (percentage change from a zero base is undefined) - this crashed
+    model training on real gold data with 'Input X contains infinity'.
+    The bundled historical fallback datasets don't happen to contain
+    this pattern, so it only surfaced against live data - reconstructed
+    here directly by injecting the exact trigger, rather than relying on
+    it happening to appear in whatever data is available when tests run."""
+    import numpy as np
+    from app.engine.features import add_features
+
+    df = _load_sample().head(100).copy()
+    df.loc[df.index[50], "Volume"] = 0  # inject the exact bug trigger
+
+    featured = add_features(df)
+    numeric_cols = featured.select_dtypes(include=[np.number])
+    assert not np.isinf(numeric_cols).values.any()
 
 
 def test_risk_education_examples_have_increasing_stop_distance():

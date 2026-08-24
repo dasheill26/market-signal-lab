@@ -9,18 +9,31 @@ page reload needed, real push rather than client-side polling) and
 genuinely different from true tick-level market data streaming, which
 needs a paid real-time feed this project doesn't have. Documented
 honestly rather than implied to be something it isn't.
+
+Real bug found and fixed: unsubscribe only called leave_room(), never
+removing the symbol from _active_symbols - so the backend kept polling
+every symbol ever visited in the app's lifetime, forever, even with
+zero remaining subscribers. Fixed with per-symbol subscriber counting:
+a symbol only leaves _active_symbols (stops being polled) once its
+count reaches zero. Also handles the case a naive fix would miss - a
+client closing the browser tab without ever calling unsubscribe -  by
+tracking which symbols each connected session subscribed to and
+cleaning those up on disconnect too.
 """
 
 import threading
 import time
 
 from flask_socketio import join_room, leave_room, emit
+from flask import request
 
 from app import socketio
 from app.engine.data_source import fetch_ohlcv
 
 POLL_INTERVAL_SECONDS = 30
 _active_symbols = set()
+_symbol_subscriber_counts = {}   # symbol -> count of sessions subscribed
+_session_symbols = {}            # session_id -> set of symbols that session subscribed to
 _lock = threading.Lock()
 _poller_started = False
 
@@ -52,6 +65,26 @@ def _ensure_poller_started():
             _poller_started = True
 
 
+def _add_subscription(session_id: str, symbol: str):
+    with _lock:
+        _session_symbols.setdefault(session_id, set()).add(symbol)
+        _symbol_subscriber_counts[symbol] = _symbol_subscriber_counts.get(symbol, 0) + 1
+        _active_symbols.add(symbol)
+
+
+def _remove_subscription(session_id: str, symbol: str):
+    with _lock:
+        session_syms = _session_symbols.get(session_id)
+        if session_syms and symbol in session_syms:
+            session_syms.discard(symbol)
+        count = _symbol_subscriber_counts.get(symbol, 0) - 1
+        if count <= 0:
+            _symbol_subscriber_counts.pop(symbol, None)
+            _active_symbols.discard(symbol)
+        else:
+            _symbol_subscriber_counts[symbol] = count
+
+
 @socketio.on("subscribe")
 def handle_subscribe(data):
     symbol = (data or {}).get("symbol")
@@ -59,8 +92,7 @@ def handle_subscribe(data):
         emit("subscribe_error", {"error": "symbol is required"})
         return
     join_room(symbol)
-    with _lock:
-        _active_symbols.add(symbol)
+    _add_subscription(request.sid, symbol)
     _ensure_poller_started()
     emit("subscribed", {"symbol": symbol})
 
@@ -70,3 +102,19 @@ def handle_unsubscribe(data):
     symbol = (data or {}).get("symbol")
     if symbol:
         leave_room(symbol)
+        _remove_subscription(request.sid, symbol)
+
+
+@socketio.on("disconnect")
+def handle_disconnect():
+    """A client can close the tab without ever calling unsubscribe -
+    clean up whatever that session was still subscribed to, so those
+    symbols don't stay in _active_symbols forever with a phantom
+    subscriber that will never unsubscribe itself."""
+    session_id = request.sid
+    with _lock:
+        symbols = list(_session_symbols.get(session_id, set()))
+    for symbol in symbols:
+        _remove_subscription(session_id, symbol)
+    with _lock:
+        _session_symbols.pop(session_id, None)

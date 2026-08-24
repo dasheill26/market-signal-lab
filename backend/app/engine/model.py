@@ -37,8 +37,10 @@ from .features import add_features, make_target, FEATURE_COLUMNS
 
 
 def prepare_dataset(raw_df: pd.DataFrame, horizon: int = 1):
-    """Raw OHLCV -> (X, y, full_df_with_features), rows with any NaN
-    feature (the first ~30 rows, from rolling windows) dropped."""
+    """Raw OHLCV -> (X, y, full_df_with_features), rows with any NaN or
+    infinite feature (the first ~30 rows, from rolling windows, plus any
+    row where a feature genuinely blows up - see the infinity-handling
+    note in features.add_features) dropped."""
     df = add_features(raw_df)
     df["target"] = make_target(df, horizon=horizon)
     df = df.dropna(subset=FEATURE_COLUMNS + ["target"])
