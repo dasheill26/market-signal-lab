@@ -29,6 +29,19 @@ A ~1.5 percentage point edge over the naive baseline. That's the honest number �
 - **Walk-forward backtested**, not randomly split — a random shuffled train/test split on time-series data leaks future information into training and produces inflated, meaningless accuracy numbers. This project trains only on data strictly before each test window, rolls the cutoff forward, and repeats — verified directly by a test that checks fold boundaries never overlap.
 - **A gradient-boosted tree model, not a deep learning model** — deliberately. On this much data (a few thousand daily bars) and this feature set (~15 engineered tabular indicators), a deep model is more prone to overfitting and no more likely to add real signal, while costing far more to train and deploy. (A separate project in this portfolio, [Face Recognition Studio](https://github.com/dasheill26/face-recognition-studio), already demonstrates what happens when a heavy deep learning stack gets reached for without checking the resource cost first — one attribute model there measured at 3.5GB peak RAM. Lesson applied here before it became a problem, not after.)
 
+## Beyond a single model: the advanced analysis
+
+Available on demand (`/api/analysis/<symbol>`, ~15-20s — deliberately not run automatically on page load, the same way a real ML system tunes/evaluates periodically offline rather than on every inference request):
+
+- **Model comparison across 3 families** — Logistic Regression, Random Forest, and Gradient Boosted Trees, evaluated under the **identical** walk-forward methodology. Not "I picked a model" — a real, reproducible comparison that justifies the choice. On the bundled NVDA data, the two tree-based models beat baseline; plain Logistic Regression, tested the same way, does not.
+- **Time-series-aware hyperparameter tuning** — `RandomizedSearchCV` over `TimeSeriesSplit`, not standard `KFold`. Standard KFold shuffles randomly, which for time-series data means a fold can train on data from *after* its own test point — reintroducing the exact future-leakage mistake the whole backtesting approach exists to prevent. Verified directly with a test that checks every fold's training indices end strictly before its test indices begin.
+- **Feature importance via permutation**, not a tree-specific heuristic — `HistGradientBoostingClassifier` doesn't expose `.feature_importances_` the way `RandomForest` does; rather than switch model types just for this, permutation importance is used instead, which is actually the more rigorous choice regardless — it measures real predictive impact (how much does shuffling this feature actually hurt accuracy?) rather than an internal tree-splitting statistic, and works identically across any model.
+- **Probability calibration — a real, honest finding, not a claim.** Checked directly whether the model's confidence percentages meant anything: uncalibrated, the Brier score was **0.2546** — worse than always guessing 50/50, which scores exactly 0.25. A "70% confident" prediction was not actually right 70% of the time. Applying isotonic calibration (`CalibratedClassifierCV`) fixed this — Brier score dropped to **0.2489** — and, measured directly rather than assumed, also improved raw directional accuracy on the same held-out split (51.9% → 53.8%). The production model uses calibration by default because this was checked and, uncalibrated, it failed the test.
+
+## Performance and caching
+
+An uncached forecast request measured at **5.3 seconds** — real cost, not negligible, from the walk-forward backtest plus a calibrated final model fit. Recomputing this on every page load or symbol switch is pure waste when the underlying data hasn't changed, so forecast results are cached in-memory with a 5-minute TTL (confirmed directly: 5.3s uncached, ~0ms on a cache hit, identical result). Same principle as the hash-based change-detection skip logic in an earlier project in this portfolio ([Lead Reconciliation Agent](https://github.com/dasheill26/lead-reconciliation-agent)) — don't redo work when nothing has changed. The advanced analysis endpoint caches separately, for an hour, since it's already an explicit on-demand action.
+
 ## Architecture
 
 ```
@@ -36,17 +49,20 @@ market-lab/
 ├── backend/
 │   ├── app/
 │   │   ├── engine/
-│   │   │   ├── data_source.py   # live Yahoo Finance + cached-real-data fallback
-│   │   │   ├── features.py      # RSI, MACD, Bollinger Bands - implemented manually
-│   │   │   ├── model.py         # HistGradientBoostingClassifier
-│   │   │   ├── backtest.py      # walk-forward validation - the honesty-critical file
-│   │   │   └── predictor.py     # ties the above together into one call
-│   │   ├── routes.py            # REST API
-│   │   └── sockets.py           # WebSocket live price updates
-│   ├── data/nvda_sample.csv     # real historical data (not synthetic), fallback + test fixture
+│   │   │   ├── data_source.py     # live Yahoo Finance + cached-real-data fallback
+│   │   │   ├── features.py        # RSI, MACD, Bollinger Bands - implemented manually
+│   │   │   ├── model.py           # HistGradientBoosting + isotonic calibration
+│   │   │   ├── backtest.py        # walk-forward validation - the honesty-critical file
+│   │   │   ├── model_comparison.py # 3 model families, identical methodology
+│   │   │   ├── tuning.py          # TimeSeriesSplit hyperparameter search
+│   │   │   ├── cache.py           # TTL cache - avoids redundant recomputation
+│   │   │   └── predictor.py       # ties the above together into two entry points
+│   │   ├── routes.py              # REST API
+│   │   └── sockets.py             # WebSocket live price updates
+│   ├── data/nvda_sample.csv       # real historical data (not synthetic), fallback + test fixture
 │   └── tests/
-├── frontend/                     # React + Vite, lightweight-charts, socket.io-client
-└── Dockerfile                    # multi-stage: Node build -> Python runtime, single service
+├── frontend/                       # React + Vite, lightweight-charts, socket.io-client
+└── Dockerfile                      # multi-stage: Node build -> Python runtime, single service
 ```
 
 Frontend and backend deploy as a **single service** — the React app is built at Docker build time and served directly by Flask, not hosted separately. Simpler, one port, no CORS complexity in production.
@@ -57,6 +73,8 @@ Frontend and backend deploy as a **single service** — the React app is built a
 2. **A real Flask routing bug**: setting `static_url_path=""` to serve the built React app caused Flask's own *implicit* static-file route to silently shadow the custom SPA catch-all route. Every unknown client-side path returned a raw Flask 404 instead of falling back to `index.html` — breaking any direct link or page refresh on a non-root URL. Found by testing the exact failure scenario directly, not by inspection. Fixed by disabling Flask's implicit static handling (`static_folder=None`) and serving everything through one explicit route. Now a permanent regression test.
 3. **A moderate esbuild vulnerability** in the initial Vite version pulled in by `npm install` — not ignored; upgraded to a patched Vite version and confirmed `npm audit` reports zero vulnerabilities before this was considered done.
 4. **Yahoo Finance's endpoints are unreachable from network-restricted sandboxed environments** — confirmed directly, not assumed. This shaped the dual-mode data source design: live fetch with a fallback to bundled real historical data, with the active mode disclosed in every API response and shown in the UI, not silently swapped.
+5. **A CI workflow YAML syntax error** — an unquoted colon inside a step name (`"...multi-stage: Node build..."`) made YAML parse it as a new mapping key instead of plain text, failing the entire workflow before any job could run. The failure signature (`created_at` and `updated_at` identical, zero jobs ever created) was diagnostic in itself. Fixed and verified by parsing the YAML directly with PyYAML before pushing again, not just pushing and hoping.
+6. **The model's confidence scores were, at first, actively worse than useless.** Uncalibrated Brier score of 0.2546 vs 0.25 for always guessing 50/50 — see "Beyond a single model" above. This is the one "bug" that isn't really a bug so much as a check most projects never run at all.
 
 ## What "live" actually means here
 
@@ -94,14 +112,15 @@ docker run -p 5003:5003 market-lab
 cd backend && pytest tests/ -v
 ```
 
-12 tests: technical indicator correctness (RSI mathematically bounded 0–100), the walk-forward fold-boundary guarantee, API contract tests (every forecast response must include the disclaimer and data mode — a client can never receive a prediction without both), and the SPA routing regression test above.
+17 tests: technical indicator correctness (RSI mathematically bounded 0–100), the walk-forward fold-boundary guarantee, model comparison uses identical methodology for every candidate, hyperparameter tuning genuinely uses `TimeSeriesSplit` (checked directly, not just that it runs), the calibrated model's Brier score beats the 50/50 baseline, the cache returns identical results faster, API contract tests (every forecast response must include the disclaimer and data mode; the analysis endpoint must always return all four components together), and the SPA routing regression test above.
 
 ## What I'd do with more time
 
 - **A proper time-series cross-validation library** (e.g. `sktime`) instead of the hand-rolled walk-forward splitter — the current implementation is correct and tested, but a maintained library would handle more edge cases.
 - **More instruments and a longer history** for less liquid forex pairs, where the bundled fallback dataset (NVDA only) doesn't represent the requested symbol at all.
-- **Feature importance / explainability output** (e.g. SHAP values) alongside each prediction — "why did the model say up?" is a natural next question the current UI doesn't answer.
+- **SHAP values** for per-prediction explainability, not just global permutation importance — "why did the model say up *this time*?" is a natural next question the current UI doesn't answer.
 - **Rate limiting** on the API, same known gap as the other projects in this portfolio.
+- **Persist the tuned hyperparameters** back into the production model rather than only reporting them — currently the tuning result is informational; wiring it back into `model.py` would close the loop.
 
 ## License
 

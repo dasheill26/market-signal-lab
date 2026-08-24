@@ -25,8 +25,9 @@ model's own number in isolation:
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass
+from typing import Callable
 
-from .model import train_model
+from .model import train_model as _default_train_model
 from .features import FEATURE_COLUMNS
 
 
@@ -51,11 +52,21 @@ class BacktestReport:
 
 
 def walk_forward_backtest(df_with_features: pd.DataFrame, n_folds: int = 5,
-                           min_train_size: int = 500) -> BacktestReport:
+                           min_train_size: int = 500,
+                           model_factory: Callable = None) -> BacktestReport:
     """df_with_features must already have FEATURE_COLUMNS, 'target', and
     a 'Close' column, NaN rows already dropped (see model.prepare_dataset).
     Expanding-window walk-forward: each fold trains on everything up to a
-    cutoff and tests on the next chunk, cutoff moves forward each fold."""
+    cutoff and tests on the next chunk, cutoff moves forward each fold.
+
+    model_factory: a callable(X_train, y_train) -> fitted model. Defaults
+    to the project's own HistGradientBoostingClassifier (model.train_model)
+    for backward compatibility, but accepting any factory here is what
+    makes honest model comparison possible - the exact same walk-forward
+    methodology runs for every model type being compared, not a different
+    evaluation for each."""
+    model_factory = model_factory or _default_train_model
+
     n = len(df_with_features)
     test_chunk = (n - min_train_size) // n_folds
     if test_chunk < 10:
@@ -74,7 +85,7 @@ def walk_forward_backtest(df_with_features: pd.DataFrame, n_folds: int = 5,
         X_train, y_train = train_df[FEATURE_COLUMNS], train_df["target"]
         X_test, y_test = test_df[FEATURE_COLUMNS], test_df["target"]
 
-        model = train_model(X_train, y_train)
+        model = model_factory(X_train, y_train)
         preds = model.predict(X_test)
         model_acc = float((preds == y_test.values).mean())
 

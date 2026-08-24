@@ -85,6 +85,11 @@ jobs:
           curl -sf http://localhost:5003/api/forecast/NVDA | tee /tmp/forecast.json
           grep -q '"disclaimer"' /tmp/forecast.json
 
+          echo "--- advanced analysis check (model comparison, tuning, importance, calibration) ---"
+          curl -sf --max-time 60 http://localhost:5003/api/analysis/NVDA | tee /tmp/analysis.json
+          grep -q '"model_comparison"' /tmp/analysis.json
+          grep -q '"calibration"' /tmp/analysis.json
+
           echo "--- frontend check (confirms the built React app is actually served) ---"
           curl -sf http://localhost:5003/ | grep -q "Market Signal Lab"
 

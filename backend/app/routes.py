@@ -11,7 +11,7 @@ demo data as if it were live.
 from flask import Blueprint, jsonify, request
 
 from app.engine.data_source import SUPPORTED_SYMBOLS
-from app.engine.predictor import run_forecast
+from app.engine.predictor import run_forecast, run_advanced_analysis
 
 bp = Blueprint("main", __name__)
 
@@ -55,6 +55,20 @@ def get_forecast(symbol):
         "forecast": forecast.__dict__,
         "chart": chart_data,
     })
+
+
+@bp.route("/api/analysis/<symbol>")
+def get_analysis(symbol):
+    """The slow, comprehensive path: model comparison, hyperparameter
+    tuning, feature importance, calibration check. ~15-20s uncached -
+    deliberately not called automatically by the frontend on page load,
+    only on explicit user action, since a page shouldn't force a 20s
+    wait for something most visitors won't look at."""
+    try:
+        result = run_advanced_analysis(symbol)
+    except Exception as e:
+        return jsonify({"error": f"Could not run analysis for '{symbol}': {e}"}), 422
+    return jsonify(result)
 
 
 def pd_isna(val):

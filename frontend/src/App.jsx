@@ -4,6 +4,7 @@ import SymbolSelector from './components/SymbolSelector.jsx'
 import PriceChart from './components/PriceChart.jsx'
 import ForecastPanel from './components/ForecastPanel.jsx'
 import BacktestPanel from './components/BacktestPanel.jsx'
+import AdvancedAnalysisPanel from './components/AdvancedAnalysisPanel.jsx'
 import './App.css'
 
 const SOCKET_URL = import.meta.env.VITE_API_URL || ''
@@ -93,6 +94,8 @@ export default function App() {
           <BacktestPanel forecast={forecast} />
         </div>
       </div>
+
+      <AdvancedAnalysisPanel symbol={symbol} />
 
       <footer>
         Built with a gradient-boosted tree model (scikit-learn) on manually implemented
